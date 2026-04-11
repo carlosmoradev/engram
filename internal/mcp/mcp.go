@@ -193,6 +193,9 @@ func registerTools(srv *server.MCPServer, s *store.Store, cfg MCPConfig, allowli
 				mcp.WithNumber("limit",
 					mcp.Description("Max results (default: 10, max: 20)"),
 				),
+				mcp.WithBoolean("all_projects",
+					mcp.Description("If true, search across all projects. Useful when you need context from a related project while working in a different one."),
+				),
 			),
 			handleSearch(s, cfg),
 		)
@@ -629,9 +632,10 @@ func handleSearch(s *store.Store, cfg MCPConfig) server.ToolHandlerFunc {
 		project, _ := req.GetArguments()["project"].(string)
 		scope, _ := req.GetArguments()["scope"].(string)
 		limit := intArg(req, "limit", 10)
+		allProjects, _ := req.GetArguments()["all_projects"].(bool)
 
-		// Apply default project when LLM sends empty
-		if project == "" {
+		// Apply default project when LLM sends empty, unless all_projects is requested
+		if project == "" && !allProjects {
 			project = cfg.DefaultProject
 		}
 		// Normalize project name
