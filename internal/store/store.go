@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -57,6 +58,12 @@ type Observation struct {
 type SearchResult struct {
 	Observation
 	Rank float64 `json:"rank"`
+}
+
+type ProjectSearchResult struct {
+	Project  string       `json:"project"`
+	Count    int          `json:"count"`
+	TopMatch SearchResult `json:"top_match"`
 }
 
 type SessionSummary struct {
@@ -1579,6 +1586,93 @@ func (s *Store) Search(query string, opts SearchOptions) ([]SearchResult, error)
 
 	if len(results) > limit {
 		results = results[:limit]
+	}
+	return results, nil
+}
+
+// SearchByProject runs a full-text search across all projects and groups the
+// results by project, ordered by the best relevance score in each group.
+// limit controls the maximum number of projects returned.
+func (s *Store) SearchByProject(query string, limit int) ([]ProjectSearchResult, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+
+	ftsQuery := sanitizeFTS(query)
+
+	sqlQ := `
+		SELECT o.id, ifnull(o.sync_id, '') as sync_id, o.session_id, o.type, o.title, o.content, o.tool_name, o.project,
+		       o.scope, o.topic_key, o.revision_count, o.duplicate_count, o.last_seen_at, o.created_at, o.updated_at, o.deleted_at,
+		       fts.rank
+		FROM observations_fts fts
+		JOIN observations o ON o.id = fts.rowid
+		WHERE observations_fts MATCH ? AND o.deleted_at IS NULL AND o.project IS NOT NULL
+		ORDER BY fts.rank
+		LIMIT ?
+	`
+
+	rows, err := s.queryItHook(s.db, sqlQ, ftsQuery, s.cfg.MaxSearchResults)
+	if err != nil {
+		return nil, fmt.Errorf("search by project: %w", err)
+	}
+	defer rows.Close()
+
+	// Group results by project, tracking best rank and match count per project
+	type group struct {
+		top   SearchResult
+		count int
+	}
+	groups := make(map[string]*group)
+	order := []string{}
+
+	for rows.Next() {
+		var sr SearchResult
+		if err := rows.Scan(
+			&sr.ID, &sr.SyncID, &sr.SessionID, &sr.Type, &sr.Title, &sr.Content,
+			&sr.ToolName, &sr.Project, &sr.Scope, &sr.TopicKey, &sr.RevisionCount, &sr.DuplicateCount,
+			&sr.LastSeenAt, &sr.CreatedAt, &sr.UpdatedAt, &sr.DeletedAt,
+			&sr.Rank,
+		); err != nil {
+			return nil, err
+		}
+
+		proj := ""
+		if sr.Project != nil {
+			proj = *sr.Project
+		}
+
+		if g, exists := groups[proj]; exists {
+			g.count++
+			// FTS5 rank is negative — closer to zero means more relevant
+			if sr.Rank > g.top.Rank {
+				g.top = sr
+			}
+		} else {
+			groups[proj] = &group{top: sr, count: 1}
+			order = append(order, proj)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Sort projects by their best rank (closest to zero = most relevant)
+	sort.Slice(order, func(i, j int) bool {
+		return groups[order[i]].top.Rank > groups[order[j]].top.Rank
+	})
+
+	if len(order) > limit {
+		order = order[:limit]
+	}
+
+	results := make([]ProjectSearchResult, 0, len(order))
+	for _, proj := range order {
+		g := groups[proj]
+		results = append(results, ProjectSearchResult{
+			Project:  proj,
+			Count:    g.count,
+			TopMatch: g.top,
+		})
 	}
 	return results, nil
 }

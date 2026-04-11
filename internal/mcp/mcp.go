@@ -62,6 +62,7 @@ var ProfileAgent = map[string]bool{
 	"mem_capture_passive":   true, // extract learnings from text — referenced in Gemini/Codex protocol
 	"mem_save_prompt":       true, // save user prompts
 	"mem_update":            true, // update observation by ID — skills say "use mem_update when you have an exact ID to correct"
+	"mem_find_project":      true, // find which projects contain memories relevant to a topic
 }
 
 // ProfileAdmin contains tools for TUI, dashboards, and manual curation
@@ -195,6 +196,29 @@ func registerTools(srv *server.MCPServer, s *store.Store, cfg MCPConfig, allowli
 				),
 			),
 			handleSearch(s, cfg),
+		)
+	}
+
+	// ─── mem_find_project (profile: agent, extended) ────────────────────
+	if shouldRegister("mem_find_project", allowlist) {
+		srv.AddTool(
+			mcp.NewTool("mem_find_project",
+				mcp.WithDescription("Find which projects contain memories relevant to a topic. Use this when you need context from an unknown project — it tells you WHERE to search before you search deep."),
+				mcp.WithTitleAnnotation("Find Project by Topic"),
+				mcp.WithReadOnlyHintAnnotation(true),
+				mcp.WithDestructiveHintAnnotation(false),
+				mcp.WithIdempotentHintAnnotation(true),
+				mcp.WithOpenWorldHintAnnotation(false),
+				mcp.WithDeferLoading(true),
+				mcp.WithString("query",
+					mcp.Required(),
+					mcp.Description("Topic or keywords to find relevant projects for"),
+				),
+				mcp.WithNumber("limit",
+					mcp.Description("Max number of projects to return (default: 5)"),
+				),
+			),
+			handleFindProject(s),
 		)
 	}
 
@@ -672,6 +696,36 @@ func handleSearch(s *store.Store, cfg MCPConfig) server.ToolHandlerFunc {
 		if anyTruncated {
 			fmt.Fprintf(&b, "---\nResults above are previews (300 chars). To read the full content of a specific memory, call mem_get_observation(id: <ID>).\n")
 		}
+
+		return mcp.NewToolResultText(b.String()), nil
+	}
+}
+
+func handleFindProject(s *store.Store) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		query, _ := req.GetArguments()["query"].(string)
+		limit := intArg(req, "limit", 5)
+
+		results, err := s.SearchByProject(query, limit)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Search error: %s. Try simpler keywords.", err)), nil
+		}
+
+		if len(results) == 0 {
+			return mcp.NewToolResultText(fmt.Sprintf("No projects found with memories about %q", query)), nil
+		}
+
+		var b strings.Builder
+		fmt.Fprintf(&b, "Projects with memories about %q:\n\n", query)
+		for _, r := range results {
+			matchWord := "match"
+			if r.Count > 1 {
+				matchWord = "matches"
+			}
+			fmt.Fprintf(&b, "%s  (%d %s)\n", r.Project, r.Count, matchWord)
+			fmt.Fprintf(&b, "  → %s\n\n", r.TopMatch.Title)
+		}
+		fmt.Fprintf(&b, "---\nUse mem_search(query: %q, project: \"<project>\") to retrieve the full memories.", query)
 
 		return mcp.NewToolResultText(b.String()), nil
 	}

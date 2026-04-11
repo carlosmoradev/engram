@@ -928,7 +928,8 @@ func TestResolveToolsAgentProfile(t *testing.T) {
 		"mem_save", "mem_search", "mem_context", "mem_session_summary",
 		"mem_session_start", "mem_session_end", "mem_get_observation",
 		"mem_suggest_topic_key", "mem_capture_passive", "mem_save_prompt",
-		"mem_update", // skills explicitly say "use mem_update when you have an exact ID to correct"
+		"mem_update",         // skills explicitly say "use mem_update when you have an exact ID to correct"
+		"mem_find_project",   // cross-project relevance routing
 	}
 	for _, tool := range expectedTools {
 		if !result[tool] {
@@ -1163,7 +1164,8 @@ func TestNewServerWithToolsNilRegistersAll(t *testing.T) {
 		"mem_save", "mem_search", "mem_context", "mem_session_summary",
 		"mem_session_start", "mem_session_end", "mem_get_observation",
 		"mem_suggest_topic_key", "mem_capture_passive", "mem_save_prompt",
-		"mem_update", "mem_delete", "mem_stats", "mem_timeline", "mem_merge_projects",
+		"mem_update", "mem_find_project",
+		"mem_delete", "mem_stats", "mem_timeline", "mem_merge_projects",
 	}
 
 	for _, name := range allTools {
@@ -1202,14 +1204,14 @@ func TestNewServerBackwardsCompatible(t *testing.T) {
 	srv := NewServer(s)
 	tools := srv.ListTools()
 
-	// 11 agent + 4 admin = 15 total
-	if len(tools) != 15 {
-		t.Errorf("NewServer should register all 15 tools, got %d", len(tools))
+	// 12 agent + 4 admin = 16 total
+	if len(tools) != 16 {
+		t.Errorf("NewServer should register all 16 tools, got %d", len(tools))
 	}
 }
 
 func TestProfileConsistency(t *testing.T) {
-	// Verify that agent + admin = all 15 tools
+	// Verify that agent + admin = all 16 tools
 	combined := make(map[string]bool)
 	for tool := range ProfileAgent {
 		combined[tool] = true
@@ -1218,8 +1220,8 @@ func TestProfileConsistency(t *testing.T) {
 		combined[tool] = true
 	}
 
-	if len(combined) != 15 {
-		t.Errorf("agent + admin should cover all 15 tools, got %d", len(combined))
+	if len(combined) != 16 {
+		t.Errorf("agent + admin should cover all 16 tools, got %d", len(combined))
 	}
 
 	// Verify no overlap between profiles
@@ -1277,6 +1279,7 @@ func TestNonCoreToolsAreDeferred(t *testing.T) {
 		"mem_session_start", "mem_session_end",
 		"mem_stats", "mem_delete", "mem_timeline",
 		"mem_capture_passive", "mem_merge_projects",
+		"mem_find_project",
 	}
 	for _, name := range deferredTools {
 		tool := tools[name]
@@ -1517,9 +1520,9 @@ func TestNewServerWithConfig(t *testing.T) {
 		t.Fatal("expected MCP server instance")
 	}
 	tools := srv.ListTools()
-	// Should have all 15 tools
-	if len(tools) != 15 {
-		t.Errorf("NewServerWithConfig should register all 15 tools, got %d", len(tools))
+	// Should have all 16 tools
+	if len(tools) != 16 {
+		t.Errorf("NewServerWithConfig should register all 16 tools, got %d", len(tools))
 	}
 }
 
